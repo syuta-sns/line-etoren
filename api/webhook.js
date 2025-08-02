@@ -1,7 +1,8 @@
+// api/webhook.js
 require('dotenv').config();
 const path = require('path');
 const fs = require('fs');
-const { Client } = require('@line/bot-sdk');
+const { Client, middleware } = require('@line/bot-sdk');
 const parser        = require('../metrics/parser');
 const compatibility = require('../metrics/compatibility');
 const habits        = require('../metrics/habits');
@@ -10,19 +11,23 @@ const records       = require('../metrics/records');
 const { buildCompatibilityCarousel } = require('../metrics/formatterFlexCarousel');
 const { calcZodiacTypeScores } = require('../metrics/zodiac');
 
-// コメントデータ読み込み
 const commentsData = JSON.parse(
   fs.readFileSync(path.join(__dirname, '../comments.json'), 'utf8')
 );
 
-// LINE SDK クライアント設定
+console.log("🔧 環境変数チェック:");
+console.log("  - CHANNEL_ACCESS_TOKEN:", process.env.CHANNEL_ACCESS_TOKEN ? "設定済み" : "未設定");
+console.log("  - CHANNEL_SECRET:", process.env.CHANNEL_SECRET ? "設定済み" : "未設定");
+
 const config = {
   channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN,
   channelSecret: process.env.CHANNEL_SECRET,
 };
-const client = new Client(config);
 
-// スコア帯分類
+console.log("🔧 LINE Client 初期化中...");
+const client = new Client(config);
+console.log("🔧 LINE Client 初期化完了");
+
 function getScoreBand(score) {
   if (score >= 95) return '95';
   if (score >= 90) return '90';
@@ -41,70 +46,112 @@ function getShutaComment(category, scoreOrKey) {
   return commentsData[category]?.[band] || '';
 }
 
-// 重複防止用メッセージID保存
+// VercelではsetIntervalは使えないため、重複チェックは簡易的に実装
 const recentMessageIds = new Set();
-setInterval(() => recentMessageIds.clear(), 5 * 60 * 1000);
 
 module.exports = async (req, res) => {
   if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
 
   console.log("🧪 Webhook received:", JSON.stringify(req.body, null, 2));
-  res.status(200).json({}); // すぐにLINEへ200レスポンス返す
-
-  (async () => {
-    try {
-      let errorSent = false;
-      for (const event of req.body.events) {
+  
+  try {
+    // 処理を実行してからレスポンスを返す
+    for (const event of req.body.events) {
+      if (event.type === 'message' && event.message.type === 'file') {
+        // 重複チェック
+        if (recentMessageIds.has(event.message.id)) {
+          console.log("⏭️ 重複メッセージをスキップ:", event.message.id);
+          continue;
+        }
+        recentMessageIds.add(event.message.id);
+        
+        // サイズ制限（1000件まで保持）
+        if (recentMessageIds.size > 1000) {
+          const firstKey = recentMessageIds.values().next().value;
+          recentMessageIds.delete(firstKey);
+        }
+        
         try {
-          if (event.type === 'message' && event.message.type === 'file') {
-            if (recentMessageIds.has(event.message.id)) continue;
-            recentMessageIds.add(event.message.id);
-          }
-          await handleEvent(event);
+          // 同期的に処理を実行（最大9秒）
+          const timeout = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Processing timeout')), 9000)
+          );
+          
+          await Promise.race([
+            handleEvent(event),
+            timeout
+          ]);
+          
         } catch (err) {
-          console.error('=== 分析中にエラー ===', err);
-          if (!errorSent && event.source?.userId) {
-            await client.pushMessage(event.source.userId, {
-              type: 'text',
-              text: '⚠️ 分析中にエラーが発生しました。少々お待ちください🙏'
-            });
-            errorSent = true;
-          }
+          console.error('イベント処理エラー:', err);
+          // エラーメッセージは handleEvent 内で送信される
         }
       }
-    } catch (fatal) {
-      console.error('🌋 Webhook 処理で致命的なエラー', fatal);
     }
-  })();
+    
+    // すべての処理が完了してから200を返す
+    res.status(200).json({});
+    console.log("✅ 処理完了 & 200レスポンスを送信");
+    
+  } catch (error) {
+    console.error('🌋 致命的なエラー:', error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Internal Server Error' });
+    }
+  }
 };
+
 
 async function handleEvent(event) {
   console.log("📥 handleEvent start!");
   console.log("📎 fileName:", event.message?.fileName);
 
   if (event.type !== 'message' || event.message.type !== 'file') return;
+
   const userId = event.source.userId;
+
+  // === ⭐️ ここにログ追加 ===
+  console.log("📥 getMessageContent 開始");
 
   // ファイル読み込み
   let rawText = '';
-  console.log("📥 getMessageContent 開始");
   try {
-    const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error("⏰ getMessageContent timeout")), 10000));
+    console.log("📥 client.getMessageContent を呼び出し中...");
+    console.log("  - message.id:", event.message.id);
+    console.log("  - client:", !!client);
+    console.log("  - client.getMessageContent:", typeof client.getMessageContent);
+    
+    // タイムアウト付きで実行（5秒）
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('getMessageContent timeout (5s)')), 5000)
+    );
+    
+    console.log("📡 getMessageContent 呼び出し前");
+    
     const stream = await Promise.race([
-      client.getMessageContent(event.message.id),
-      timeout
+      client.getMessageContent(event.message.id).catch(err => {
+        console.error("❌ getMessageContent エラー詳細:", err);
+        throw err;
+      }),
+      timeoutPromise
     ]);
+    
+    console.log("📡 getMessageContent 成功");
+
+    // === ⭐️ stream取得ログ ===
     console.log("📥 stream を取得");
 
     const chunks = [];
     for await (const c of stream) chunks.push(c);
-    rawText = Buffer.concat(chunks).toString('utf8');
 
+    // === ⭐️ stream読み込み完了ログ ===
+    console.log("📥 stream 読み込み完了");
+
+    rawText = Buffer.concat(chunks).toString('utf8');
     console.log("📃 rawText length:", rawText.length);
     console.log("📃 rawText preview:", rawText.slice(0, 100));
   } catch (err) {
-    console.error("📛 getMessageContent error:", err?.message || err);
-    console.error("📛 エラーオブジェクト:", err);
+    console.error("📛 getMessageContent error:", err);
     await client.pushMessage(userId, {
       type: 'text',
       text: '⚠️ ファイルの読み込み中にエラーが発生しました'
@@ -112,7 +159,6 @@ async function handleEvent(event) {
     return;
   }
 
-  // パース処理
   let messages;
   try {
     messages = parser.parseTLText(rawText);
@@ -175,7 +221,6 @@ async function handleEvent(event) {
     promotionalLinkUrl:  'https://note.com/enkyorikun/n/n38aad7b8a548'
   });
 
-  // Flexサイズ確認
   if (carousel?.contents?.type === 'carousel' && Array.isArray(carousel.contents.contents)) {
     carousel.contents.contents.forEach((bubble, index) => {
       const msg = {
@@ -194,7 +239,6 @@ async function handleEvent(event) {
     }
   }
 
-  // Flex送信
   try {
     console.log("📮 pushMessage 開始");
     await client.pushMessage(userId, carousel);
