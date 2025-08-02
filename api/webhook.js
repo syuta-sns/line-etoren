@@ -1,7 +1,8 @@
+// api/webhook.js
 require('dotenv').config();
 const path = require('path');
 const fs = require('fs');
-const { Client } = require('@line/bot-sdk');
+const { Client, middleware } = require('@line/bot-sdk');
 const parser        = require('../metrics/parser');
 const compatibility = require('../metrics/compatibility');
 const habits        = require('../metrics/habits');
@@ -10,19 +11,16 @@ const records       = require('../metrics/records');
 const { buildCompatibilityCarousel } = require('../metrics/formatterFlexCarousel');
 const { calcZodiacTypeScores } = require('../metrics/zodiac');
 
-// コメントデータ読み込み
 const commentsData = JSON.parse(
   fs.readFileSync(path.join(__dirname, '../comments.json'), 'utf8')
 );
 
-// LINE SDK クライアント設定
 const config = {
   channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN,
   channelSecret: process.env.CHANNEL_SECRET,
 };
 const client = new Client(config);
 
-// スコア帯分類
 function getScoreBand(score) {
   if (score >= 95) return '95';
   if (score >= 90) return '90';
@@ -41,7 +39,6 @@ function getShutaComment(category, scoreOrKey) {
   return commentsData[category]?.[band] || '';
 }
 
-// 重複防止用メッセージID保存
 const recentMessageIds = new Set();
 setInterval(() => recentMessageIds.clear(), 5 * 60 * 1000);
 
@@ -49,7 +46,7 @@ module.exports = async (req, res) => {
   if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
 
   console.log("🧪 Webhook received:", JSON.stringify(req.body, null, 2));
-  res.status(200).json({}); // すぐにLINEへ200レスポンス返す
+  res.status(200).json({});
 
   (async () => {
     try {
@@ -83,24 +80,25 @@ async function handleEvent(event) {
   console.log("📎 fileName:", event.message?.fileName);
 
   if (event.type !== 'message' || event.message.type !== 'file') return;
+
   const userId = event.source.userId;
 
-  // ファイル読み込み
   let rawText = '';
-  console.log("📥 getMessageContent 開始");
   try {
+    console.log("🧪 message.id:", event.message.id);
+    console.log("📥 getMessageContent 開始");
     const stream = await client.getMessageContent(event.message.id);
     console.log("📥 stream を取得");
-
     const chunks = [];
-    for await (const c of stream) chunks.push(c);
+    for await (const c of stream) {
+      console.log("📦 chunk received:", c.length);
+      chunks.push(c);
+    }
     rawText = Buffer.concat(chunks).toString('utf8');
-
     console.log("📃 rawText length:", rawText.length);
     console.log("📃 rawText preview:", rawText.slice(0, 100));
   } catch (err) {
-    console.error("📛 getMessageContent error:", err?.message || err);
-    console.error("📛 エラーオブジェクト:", err);
+    console.error("📛 getMessageContent error:", err);
     await client.pushMessage(userId, {
       type: 'text',
       text: '⚠️ ファイルの読み込み中にエラーが発生しました'
@@ -108,7 +106,6 @@ async function handleEvent(event) {
     return;
   }
 
-  // パース処理
   let messages;
   try {
     messages = parser.parseTLText(rawText);
@@ -171,7 +168,6 @@ async function handleEvent(event) {
     promotionalLinkUrl:  'https://note.com/enkyorikun/n/n38aad7b8a548'
   });
 
-  // Flexサイズ確認
   if (carousel?.contents?.type === 'carousel' && Array.isArray(carousel.contents.contents)) {
     carousel.contents.contents.forEach((bubble, index) => {
       const msg = {
@@ -182,7 +178,6 @@ async function handleEvent(event) {
       const size = Buffer.byteLength(JSON.stringify(msg), 'utf8');
       console.log(`📦 ページ${index + 1} のサイズ: ${size} bytes`);
     });
-
     const totalSize = Buffer.byteLength(JSON.stringify(carousel), 'utf8');
     console.log(`📦 全体（carousel）サイズ: ${totalSize} bytes`);
     if (totalSize > 25000) {
@@ -190,7 +185,6 @@ async function handleEvent(event) {
     }
   }
 
-  // Flex送信
   try {
     console.log("📮 pushMessage 開始");
     await client.pushMessage(userId, carousel);
