@@ -1,8 +1,5 @@
 // api/webhook.js
-const app = require('../index');
-const serverless = require('serverless-http');
-
-module.exports = serverless(app);
-
-
-
+module.exports = async (req, res) => {
+  console.log('✅ Webhook received');
+  res.status(200).send('OK');
+};
