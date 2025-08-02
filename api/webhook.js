@@ -16,7 +16,7 @@ const commentsData = JSON.parse(
   fs.readFileSync(path.join(__dirname, '../comments.json'), 'utf8')
 );
 
-// LINEクライアント
+// LINEクライアント設定
 const config = {
   channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN,
   channelSecret: process.env.CHANNEL_SECRET,
@@ -90,9 +90,16 @@ async function handleEvent(event) {
   // ファイル読み込み
   let rawText = '';
   try {
+    console.log("📥 getMessageContent 開始");
     const stream = await client.getMessageContent(event.message.id);
+    console.log("📥 stream を取得");
+
     const chunks = [];
-    for await (const c of stream) chunks.push(c);
+    for await (const c of stream) {
+      chunks.push(c);
+    }
+    console.log("📥 stream 読み込み完了");
+
     rawText = Buffer.concat(chunks).toString('utf8');
     console.log("📃 rawText length:", rawText.length);
     console.log("📃 rawText preview:", rawText.slice(0, 100));
