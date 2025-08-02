@@ -50,9 +50,8 @@ module.exports = async (req, res) => {
   if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
 
   console.log("🧪 Webhook received:", JSON.stringify(req.body, null, 2));
-  res.status(200).json({}); // まず即レス
+  res.status(200).json({}); // 即レスポンス
 
-  // 後で非同期処理
   (async () => {
     try {
       let errorSent = false;
@@ -80,22 +79,47 @@ module.exports = async (req, res) => {
   })();
 };
 
-// handleEvent 関数（まるっと移植）
 async function handleEvent(event) {
-  
   console.log("📥 handleEvent start!");
   console.log("📎 fileName:", event.message?.fileName);
-  
+
   if (event.type !== 'message' || event.message.type !== 'file') return;
 
   const userId = event.source.userId;
-  const stream = await client.getMessageContent(event.message.id);
-  const chunks = [];
-  for await (const c of stream) chunks.push(c);
-  const rawText = Buffer.concat(chunks).toString('utf8');
 
-  const messages  = parser.parseTLText(rawText);
-  const profile   = await client.getProfile(userId);
+  // ファイル読み込み
+  let rawText = '';
+  try {
+    const stream = await client.getMessageContent(event.message.id);
+    const chunks = [];
+    for await (const c of stream) chunks.push(c);
+    rawText = Buffer.concat(chunks).toString('utf8');
+    console.log("📃 rawText length:", rawText.length);
+    console.log("📃 rawText preview:", rawText.slice(0, 100));
+  } catch (err) {
+    console.error("📛 getMessageContent error:", err);
+    await client.pushMessage(userId, {
+      type: 'text',
+      text: '⚠️ ファイルの読み込み中にエラーが発生しました'
+    });
+    return;
+  }
+
+  // パース処理
+  let messages;
+  try {
+    messages = parser.parseTLText(rawText);
+    console.log("📝 メッセージ数:", messages.length);
+  } catch (err) {
+    console.error("📛 parseTLText error:", err);
+    await client.pushMessage(userId, {
+      type: 'text',
+      text: '⚠️ トーク履歴の解析に失敗しました'
+    });
+    return;
+  }
+
+  const profile = await client.getProfile(userId);
   const { self, other } = parser.extractParticipants(messages, profile.displayName);
   const selfName  = self;
   const otherName = other;
@@ -112,7 +136,7 @@ async function handleEvent(event) {
     recordsData
   });
   const animalTypeData = commentsData.animalTypes?.[animalType] || {};
-  console.log('干支診断 scores: ', zodiacScores);
+  console.log('🐯 干支診断 scores:', zodiacScores);
 
   const radar = compData.radarScores;
   const lowestCategory = Object.entries(radar).sort((a, b) => a[1] - b[1])[0][0];
@@ -144,7 +168,7 @@ async function handleEvent(event) {
     promotionalLinkUrl:  'https://note.com/enkyorikun/n/n38aad7b8a548'
   });
 
-  // --- ✅ Flexバイトサイズ確認 ---
+  // Flex サイズ確認
   if (carousel?.contents?.type === 'carousel' && Array.isArray(carousel.contents.contents)) {
     carousel.contents.contents.forEach((bubble, index) => {
       const msg = {
@@ -163,5 +187,16 @@ async function handleEvent(event) {
     }
   }
 
-  await client.pushMessage(userId, carousel);
+  // Flex送信
+  try {
+    console.log("📮 pushMessage 開始");
+    await client.pushMessage(userId, carousel);
+    console.log("✅ pushMessage 完了");
+  } catch (err) {
+    console.error("📛 pushMessage error:", err);
+    await client.pushMessage(userId, {
+      type: 'text',
+      text: '⚠️ 結果の送信に失敗しました'
+    });
+  }
 }
