@@ -85,8 +85,7 @@ async function handleEvent(event) {
   
   console.log("📥 handleEvent start!");
   console.log("📎 fileName:", event.message?.fileName);
-
-  const userId = event.source.userId;
+  
   if (event.type !== 'message' || event.message.type !== 'file') return;
 
   const userId = event.source.userId;
