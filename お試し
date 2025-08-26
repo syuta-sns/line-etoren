@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>未来1年間の運勢グラフ</title>
+  <style>
+    body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background-color: #f0f0f0; }
+    #chart-container { width: 90%; max-width: 800px; padding: 20px; background-color: white; border-radius: 10px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1); }
+  </style>
+</head>
+<body>
+  <div id="chart-container">
+    <h1>未来1年間の運勢</h1>
+    <p>※ この運勢はランダムなダミーデータです。</p>
+    <canvas id="futureLuckChart"></canvas>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@2.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <script>
+    const ctx = document.getElementById('futureLuckChart').getContext('2d');
+    const today = new Date();
+    const luckData = [];
+    let currentLuck = 50; // 初期値
+
+    for (let i = 0; i < 365; i++) {
+      const date = new Date();
+      date.setDate(today.getDate() + i);
+
+      // 単純な運勢の変動ロジック（例：増減を繰り返す）
+      if (Math.random() < 0.5) {
+        currentLuck += Math.random() * 5;
+      } else {
+        currentLuck -= Math.random() * 5;
+      }
+      currentLuck = Math.max(0, Math.min(100, currentLuck)); // 0～100の範囲に保つ
+
+      luckData.push({ x: date, y: currentLuck.toFixed(2) });
+    }
+
+    const myChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        datasets: [{
+          label: '運勢',
+          data: luckData,
+          borderColor: 'rgb(75, 192, 192)',
+          tension: 0.2
+        }]
+      },
+      options: {
+        responsive: true,
+        scales: {
+          x: {
+            type: 'time',
+            time: {
+              unit: 'month',
+              tooltipFormat: 'yyyy-MM-dd'
+            },
+            title: {
+              display: true,
+              text: '日付'
+            }
+          },
+          y: {
+            title: {
+              display: true,
+              text: '運勢 (%)'
+            },
+            min: 0,
+            max: 100
+          }
+        },
+        plugins: {
+          legend: {
+            display: true,
+          }
+        }
+      }
+    });
+  </script>
+</body>
+</html>
